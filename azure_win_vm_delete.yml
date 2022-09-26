@@ -1,0 +1,41 @@
+---
+
+  - name: Removing lock for resource group {{ item.rg_name }}
+    azure_rm_lock:
+      managed_resource_id: "/subscriptions/{{ sub_id }}/resourceGroups/{{ item.rg_name }}"
+      name: "{{ item.lock_name }}"
+      state: absent
+      #level: read_only
+    with_items:
+      - { rg_name: "{{ image_source_rg }}", lock_name: "{{ sharedimage_resource_group_lock }}" }
+      - { rg_name: "{{ network_rg }}", lock_name: "{{ network_resource_group_lock }}" }
+    when: ( (network_resource_group_lock is defined) and (sharedimage_resource_group_lock is defined) )
+    register: rg_lock_deleted
+
+  - debug:
+      msg: "{{ rg_lock_deleted }}"
+
+  - name: Removing VM {{ vm_name }} and all resources that were autocreated
+    azure_rm_virtualmachine:
+      resource_group: "{{ resource_group }}"
+      name: "{{ vm_name }}"
+      remove_on_absent: all
+      #remove_on_absent: all_autocreated
+      state: absent
+    register: nuke_vm
+
+  - name: Recreating lock for resource group {{ item.rg_name }}
+    azure_rm_lock:
+      managed_resource_id: "/subscriptions/{{ sub_id }}/resourceGroups/{{ item.rg_name }}"
+      name: "{{ item.lock_name }}"
+      state: present
+      level: can_not_delete
+    with_items:
+      - { rg_name: "{{ image_source_rg }}", lock_name: "{{ sharedimage_resource_group_lock }}" }
+      - { rg_name: "{{ network_rg }}", lock_name: "{{ network_resource_group_lock }}" }
+    when: ( rg_lock_deleted and (sharedimage_resource_group_lock is defined and network_resource_group_lock is defined) )
+    register: rg_lock_create
+
+  - debug:
+      msg: "{{ rg_lock_create }}"
+

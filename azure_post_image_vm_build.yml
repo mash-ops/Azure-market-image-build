@@ -1,0 +1,149 @@
+---
+
+  - name: Print vm_name debug info
+    debug:
+      msg: "{{ vm_name  }}"
+    ignore_errors: yes
+
+  - name: set fact for Windows vm size=(standard b4ms;4vcpu 16gig mem)
+    set_fact:
+      #Since Jul30-2022 build, seeing below error, changing the vm_size to address this issue. New size Standard_D4s_v3
+      #Azure Error AllocationFailed Message Allocation failed. Please note that allocation for this subscription is constrained to a set of clusters,
+      #                                                          which may be out of capacity
+      #vm_name: "{{ vm_name }}-test"
+      vm_size: Standard_D4s_v3
+      #vm_size: Standard_B4ms
+      image_id: "/subscriptions/{{ sub_id }}/resourceGroups/{{ resource_group }}/providers/Microsoft.Compute/images/{{ template_name }}"
+      #image_id: "/subscriptions/40437110-3d98-49c3-95e5-72b390b1aac5/resourceGroups/ss95-imagegallery-rg/providers/Microsoft.Compute/images/{{ template_name }}"
+
+  - name: "Create a network interface for VM {{ vm_name }}"
+    azure_rm_networkinterface:
+      name: "nic1-{{ vm_name }}"
+      resource_group: "{{ network_rg }}"
+      virtual_network: "{{ virtual_network }}"
+      subnet_name: "{{ subnet_name }}"
+      #security_group: "{{ security_group }}"
+      security_group: none
+      create_with_security_group: false
+      ip_configurations:
+        - name: default
+          primary: True
+    delegate_to: localhost
+    register: nic_create_status
+
+  - name: Create VM for "{{ vm_name }}"
+    azure_rm_virtualmachine:
+      resource_group: "{{ resource_group }}"
+      name: "{{ vm_name }}"
+      public_ip_allocation_method: Disabled
+      virtual_network_resource_group: "{{ network_rg }}"
+      virtual_network_name: "/subscriptions/{{ sub_id }}/resourceGroups/{{ network_rg }}/providers/Microsoft.Network/virtualNetworks/{{ virtual_network }}"
+      subnet_name: "{{ subnet_name }}"
+      network_interface_names: "/subscriptions/{{ sub_id}}/resourceGroups/{{ network_rg }}/providers/Microsoft.Network/networkInterfaces/nic1-{{ vm_name }}"
+      vm_size: "{{ vm_size }}"
+      short_hostname: "{{ vm_name }}"
+      managed_disk_type: Premium_LRS
+      admin_username: opsadmin
+      admin_password: "{{ secret.opsadmin }}"
+      #admin_password: "{{ secret.deployer_pass }}"
+      os_type: Windows
+      os_disk_size_gb: "{{ disk_size }}"
+      tags: "{{ az_tags }}"
+      image:
+        id: "{{ image_id }}"
+    delegate_to: localhost
+
+  - name: "Retrieve VM Private IP for nic1-{{ vm_name }}"
+    azure_rm_networkinterface_info:
+      resource_group: "{{ network_rg }}"
+      name: "nic1-{{ vm_name }}"
+    register: nic_info
+
+  - name: Print NIC info
+    debug:
+      msg: "{{ nic_info.networkinterfaces[0].ip_configurations[0].private_ip_address}}"
+    ignore_errors: yes
+
+  - name: Setting host facts using complex arguments
+    set_fact:
+       vm_ip: "{{ nic_info.networkinterfaces[0].ip_configurations[0].private_ip_address}}"
+    ignore_errors: yes
+
+
+  - name: create Azure vm extension to enable HTTP WinRM listener
+    azure_rm_virtualmachineextension:
+      name: winrm-extension
+      resource_group: "{{ resource_group }}"
+      virtual_machine_name: "{{ vm_name }}"
+      publisher: Microsoft.Compute
+      virtual_machine_extension_type: CustomScriptExtension
+      type_handler_version: '1.9'
+      settings: '{"fileUris": ["https://raw.githubusercontent.com/ansible/ansible/devel/examples/scripts/ConfigureRemotingForAnsible.ps1"],"commandToExecute": "powershell -ExecutionPolicy Unrestricted -File ConfigureRemotingForAnsible.ps1"}'
+      auto_upgrade_minor_version: true
+
+  - name: Disabling Firewall
+    azure_rm_virtualmachineextension:
+      name: winrm-extension
+      resource_group: "{{ resource_group }}"
+      virtual_machine_name: "{{ vm_name }}"
+      publisher: Microsoft.Compute
+      virtual_machine_extension_type: CustomScriptExtension
+      type_handler_version: '1.9'
+      settings: '{"commandToExecute": "powershell -ExecutionPolicy bypass Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False"}'
+      auto_upgrade_minor_version: true
+
+  - name: WinRM setting AllowUnencrypted
+    azure_rm_virtualmachineextension:
+      name: winrm-extension
+      resource_group: "{{ resource_group }}"
+      virtual_machine_name: "{{ vm_name }}"
+      publisher: Microsoft.Compute
+      virtual_machine_extension_type: CustomScriptExtension
+      type_handler_version: '1.9'
+      settings: '{"commandToExecute": "powershell -ExecutionPolicy Unrestricted  Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value true"}'
+      auto_upgrade_minor_version: true
+
+  - name: Setting winrm facts for {{ vm_name }} ':' {{ vm_ip }}
+    set_fact:
+       vm_ip: "{{ nic_info.networkinterfaces[0].ip_configurations[0].private_ip_address}}"
+       ansible_host: "{{ vm_ip }}"
+       ansible_user: opsadmin
+       ansible_password: "{{ secret.opsadmin }}"
+       ansible_connection: winrm
+       ansible_winrm_server_cert_validation: ignore
+       ansible_winrm_port: 5985
+       pipelining: True
+    ignore_errors: yes
+
+  - name: Wait for system to become reachable over WinRM
+    wait_for_connection:
+
+  - name: Ensure WinRM starts when the system has settled and is ready to work reliably
+    win_service:
+      name: WinRM
+      start_mode: delayed
+    #when: nic_create_status.changed
+
+  - name: Install Feature IIS Web-Server with sub features and management tools
+    win_feature:
+      name: Web-Server
+      state: present
+      source: C:\Windows\WinSxS
+      include_sub_features: yes
+      include_management_tools: yes
+    register: win_feature
+
+  - name: Reboot if installing Web-Server feature requires it
+    win_reboot:
+    #ansible.windows.win_reboot:
+    when: win_feature.reboot_required
+
+  - name: Install Role Failover-clustering, RSAT-clustering, with sub features and management tools
+    win_feature:
+      name: Failover-Clustering
+      state: present
+      source: C:\Windows\WinSxS
+      include_sub_features: yes
+      include_management_tools: yes
+    register: win_role
+

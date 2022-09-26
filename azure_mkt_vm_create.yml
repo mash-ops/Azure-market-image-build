@@ -1,0 +1,149 @@
+---
+# Aug-26-2021 update: added security_group: none and create_with_security_group: false for module azure_rm_networkinterface 
+#                     to overcome issue with DC60 NSG issue "it does not have permission to perform action 'Microsoft.Network/networkSecurityGroups/join/action'"
+# Dec-06-2021 update: Added task latest_version for image, since module azure_rm_virtualmachine latest is hitting the bug. 
+#                     Bug: https://github.com/ansible-collections/azure/issues/601
+
+  - name: Print item debug info
+    debug:
+      msg: "{{ item  }}"
+    ignore_errors: yes
+
+  - name: set fact for Windows vm size=(standard b4ms;4vcpu 16gig mem)
+    set_fact:
+      #Since Jul30-2022 build, seeing below error, chaning the vm_size to address this issue. New size Standard_D4s_v3
+      #Azure Error AllocationFailed Message Allocation failed. Please note that allocation for this subscription is constrained to a set of clusters, 
+      #                                                          which may be out of capacity
+      vm_size: Standard_D4s_v3
+      #vm_size: Standard_B4ms
+      sku: "{{ '2012-R2-Datacenter' if item.find('w12') != -1 else '2016-Datacenter' if item.find('w16') != -1 else '2019-Datacenter' if item.find('w19') != -1 }}"
+      #sku: "{{ '2012-R2-Datacenter' if item.find('w12r2') != -1 else '2016-Datacenter' if item.find('w16dc') != -1 else '2019-Datacenter' if item.find('w19dc') != -1 }}"
+      #winversion: "{{ 'Windows2012' if item.find('w12r2') != -1 else 'Windows2016' }}"
+      # Adding below 2 for resetting the winrm after the first item run
+      ansible_connection: local
+      ansible_host: localhost
+
+  - name: "Setting the latest Image verion for {{ sku }}"
+    shell: | 
+        az vm image show --location {{ image_location }} --urn MicrosoftWindowsServer:WindowsServer:{{ sku }}:latest --query name -o tsv
+    register: latest_version
+    
+  - name: Print latest image version debug info
+    debug:
+      msg: "{{ latest_version.stdout }}"
+    ignore_errors: yes
+
+  - name: "Create a network interface for VM {{ item }}"
+    azure_rm_networkinterface:
+      name: "nic1-{{ item }}"
+      resource_group: "{{ network_rg }}"
+      virtual_network: "{{ virtual_network }}"
+      subnet_name: "{{ subnet_name }}"
+      #security_group: "{{ security_group }}"
+      security_group: none
+      create_with_security_group: false
+      ip_configurations:
+        - name: default
+          primary: True
+    delegate_to: localhost
+    register: nic_create_status
+
+  - name: Create VM for "{{ item }}"
+    azure_rm_virtualmachine:
+      resource_group: "{{ resource_group }}"
+      name: "{{ item }}"
+      public_ip_allocation_method: Disabled
+      virtual_network_resource_group: "{{ network_rg }}"
+      virtual_network_name: "/subscriptions/{{ sub_id }}/resourceGroups/{{ network_rg }}/providers/Microsoft.Network/virtualNetworks/{{  virtual_network }}"
+      subnet_name: "{{ subnet_name }}"
+      network_interface_names: "/subscriptions/{{ sub_id}}/resourceGroups/{{ network_rg }}/providers/Microsoft.Network/networkInterfaces/nic1-{{ item }}"
+      vm_size: "{{ vm_size }}"
+      short_hostname: "{{ item }}"
+      managed_disk_type: Premium_LRS
+      admin_username: opsadmin
+      admin_password: "{{ secret.opsadmin }}"
+      os_type: Windows
+      os_disk_size_gb: "{{ disk_size }}"
+      tags: "{{ az_tags }}"
+      image:
+        publisher: "MicrosoftWindowsServer"
+        offer: "WindowsServer"
+        sku: "{{ sku }}"
+        #version: latest
+        version: "{{ latest_version.stdout }}"
+    delegate_to: localhost
+    register: vm_create_status
+
+  - name: "Retrieve VM Private IP for nic1-{{ item }}"
+    azure_rm_networkinterface_info:
+      resource_group: "{{ network_rg }}"
+      name: "nic1-{{ item }}"
+    register: nic_info
+
+  - name: Print NIC info
+    debug:
+      msg: "{{ nic_info.networkinterfaces[0].ip_configurations[0].private_ip_address}}"
+    ignore_errors: yes
+
+  - name: Setting host facts using complex arguments
+    set_fact:
+       vm_name: "{{ item }}"
+       vm_ip: "{{ nic_info.networkinterfaces[0].ip_configurations[0].private_ip_address}}"
+       image_version: "Azure-Marketplace-SKU = {{ sku }}, ImageReference.Version = {{ vm_create_status.ansible_facts.azure_vm.properties.storageProfile.imageReference.version }}"
+    ignore_errors: yes
+
+  - name: create Azure vm extension to enable HTTP WinRM listener
+    azure_rm_virtualmachineextension:
+      name: winrm-extension
+      resource_group: "{{ resource_group }}"
+      virtual_machine_name: "{{ item }}"
+      publisher: Microsoft.Compute
+      virtual_machine_extension_type: CustomScriptExtension
+      type_handler_version: '1.9'
+      settings: '{"fileUris": ["https://raw.githubusercontent.com/ansible/ansible/devel/examples/scripts/ConfigureRemotingForAnsible.ps1"],"commandToExecute": "powershell -ExecutionPolicy Unrestricted -File ConfigureRemotingForAnsible.ps1"}'
+      auto_upgrade_minor_version: true
+
+  - name: Disabling Firewall
+    azure_rm_virtualmachineextension:
+      name: winrm-extension
+      resource_group: "{{ resource_group }}"
+      virtual_machine_name: "{{ item }}"
+      publisher: Microsoft.Compute
+      virtual_machine_extension_type: CustomScriptExtension
+      type_handler_version: '1.9'
+      settings: '{"commandToExecute": "powershell -ExecutionPolicy bypass Set-NetFirewallProfile -Profile Domain,Public,Private -Enabled False"}'
+      auto_upgrade_minor_version: true
+
+  - name: WinRM setting AllowUnencrypted
+    azure_rm_virtualmachineextension:
+      name: winrm-extension
+      resource_group: "{{ resource_group }}"
+      virtual_machine_name: "{{ item }}"
+      publisher: Microsoft.Compute
+      virtual_machine_extension_type: CustomScriptExtension
+      type_handler_version: '1.9'
+      settings: '{"commandToExecute": "powershell -ExecutionPolicy Unrestricted  Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value true"}'
+      #settings: '{"commandToExecute": "powershell -ExecutionPolicy Unrestricted winrm set winrm/config/service @{AllowUnencrypted=true}"}'
+      auto_upgrade_minor_version: true
+
+  - name: Setting winrm facts for {{ item }} ':' {{ vm_ip }}
+    set_fact:
+       vm_ip: "{{ nic_info.networkinterfaces[0].ip_configurations[0].private_ip_address}}"
+       ansible_host: "{{ vm_ip }}"
+       ansible_user: opsadmin
+       ansible_password: "{{ secret.opsadmin }}"
+       ansible_connection: winrm
+       ansible_winrm_server_cert_validation: ignore
+       ansible_winrm_port: 5985
+       pipelining: True
+    ignore_errors: yes
+
+  - name: Wait for system to become reachable over WinRM
+    wait_for_connection:
+
+  - name: Ensure WinRM starts when the system has settled and is ready to work reliably
+    win_service:
+      name: WinRM
+      start_mode: delayed
+    when: nic_create_status.changed
+

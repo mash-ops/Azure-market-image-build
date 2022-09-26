@@ -1,0 +1,37 @@
+---
+
+  - name: Checking if "{{ vm_name }}" is already Generalized, idempotent ;)
+    azure_rm_virtualmachine_info:
+      resource_group: "{{ resource_group }}"
+      name: "{{ vm_name }}"
+    register: vm_powerstate
+
+  - debug:
+      var: vm_powerstate.vms[0].power_state
+
+  - name: "Generalize VM"
+    delegate_to: localhost
+    azure_rm_virtualmachine:
+      #name: w12r2-jun-bld
+      #resource_group: ss95-imagegallery-rg
+      #resource_group: SS95-DELIVERYTOOLS-RG
+      #name:           "{{ vmss_template_name }}"
+      #name: Windows2016
+      name: "{{ vm_name }}"
+      resource_group: "{{ resource_group }}"
+      generalized:    true
+    register: generalized_status
+    when: vm_powerstate.vms[0].power_state != "generalized" 
+
+  - name: "Pausing 2 minutes for VM generalize to settle"
+    pause:
+      minutes: 2
+    when: generalized_status.changed
+
+  - name: "Capturing the syspreped VM to image"
+    delegate_to: localhost
+    azure_rm_image:
+      resource_group: "{{ resource_group }}"
+      name: "{{ template_name }}"
+      source: "/subscriptions/40437110-3d98-49c3-95e5-72b390b1aac5/resourceGroups/{{ resource_group }}/providers/Microsoft.Compute/virtualMachines/{{ vm_name }}"
+                                                      

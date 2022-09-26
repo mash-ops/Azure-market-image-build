@@ -1,0 +1,81 @@
+---
+  - name: Wait for Tools dir is created upon initial tanium installation
+    win_wait_for:
+      path: C:\Program Files (x86)\Tanium\Tanium Client\tools
+      state: present
+
+  # Noticed as of Dec-08-2021, the tools dir count has increaded to 16 from initial 15
+  # Dec-08-2021: Changing the dir count to 16 for now, needs revisting for changing the logic
+  # As of Dec-13-2021, the dir count of tanium tools dir has reached 18, changed the until condition to fix this
+  # As of Apr-13-2022, the dir count of tanium tools dir has reduced to 12 (including our customtags.txt), reducing the count to 12
+  - name: Checking if Tanium client tools dir is populated
+    win_shell: Write-Host (Get-ChildItem 'C:\Program Files (x86)\Tanium\Tanium Client\tools'|Measure-Object).count
+    register: tanium_tools_count
+    until: (tanium_tools_count.stdout_lines[0]| int >= 12)
+    #until: (tanium_tools_count.stdout_lines[0]| int >= 16)
+    #As of Dec-13-2021, added above until and commented below until condition
+    #until: tanium_tools_count.stdout.find("16") != -1
+    retries: 500
+    delay: 60
+    ignore_errors: yes
+
+  - name: Print Tanium tool dir count info
+    debug:
+      msg: "{{ tanium_tools_count }}"
+    ignore_errors: yes
+
+  # Dec-08-2021: Changing the dir count to 16 for now, needs revisting for changing the logic
+  # As of Dec-13-2021, the dir count of tanium tools dir has reached 18, changed the until condition to fix this
+  # As of Apr-13-2022, the dir count of tanium tools dir has reduced to 12 (including our customtags.txt), reducing the count to 12
+  - name: Checking Again due to 2019 bild issue, if Tanium client tools dir is populated
+    win_shell: Write-Host (Get-ChildItem 'C:\Program Files (x86)\Tanium\Tanium Client\tools'|Measure-Object).count
+    register: tanium_tools_count
+    until: (tanium_tools_count.stdout_lines[0]| int >= 12)
+    #until: (tanium_tools_count.stdout_lines[0]| int >= 16)
+    #As of Dec-13-2021, added above until and commented below until condition
+    #until: tanium_tools_count.stdout.find("16") != -1
+    retries: 500
+    delay: 60
+
+  - name: Wait for patch0.log is created 
+    win_wait_for:
+      path: C:\Program Files (x86)\Tanium\Tanium Client\Patch\patch0.log
+      state: present
+      timeout: 3600
+      sleep: 120
+      delay: 130
+    retries: 500
+    delay: 120
+
+  - name: Checking if Tanium patche installation is completed
+    win_shell: (get-Content 'C:\Program Files (x86)\Tanium\Tanium Client\Patch\patch*.log' |select-string "All Patches Applied")
+    #win_shell: (get-Content 'C:\Program Files (x86)\Tanium\Tanium Client\Patch\patch*.log' |select-string "Completed transaction for install_")
+    #win_shell: Write-Host (get-Content 'C:\Program Files (x86)\Tanium\Tanium Client\Patch\patch*.log' |select-string "Completed transaction for install_")
+    register: patch_complete_status
+    until: patch_complete_status.stdout.find("All Patches Applied") != -1
+    #until: patch_complete_status.stdout.find("Completed transaction for install_") != -1
+    retries: 500
+    delay: 120
+
+  - name: Print Tanium patch status
+    debug:
+      msg: "{{ patch_complete_status }}"
+    ignore_errors: yes
+
+    # Nov-22-2021: commented in win_harden.yml and adding defender uninstall after tanium patch install, to address win2016 tanium patch issue
+    # Remove windows-defender
+  - name: Uninstall defender
+    win_shell: |
+        Uninstall-WindowsFeature -Name Windows-Defender
+    ignore_errors: true
+
+
+    # After tanium patch, some patch may need a reboot, rebooing here
+  - name: Rebooting after Tanium windows update/patching
+    win_reboot:
+      post_reboot_delay: 120
+    when: patch_complete_status
+
+  - name: Print current patches after Tanium patching
+    win_shell: get-hotfix|Sort-Object -Property InstalledOn
+    when: patch_complete_status

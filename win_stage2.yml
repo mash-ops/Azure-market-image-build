@@ -1,0 +1,43 @@
+---
+  - name: "Uploading payload to {{ vm_ip }}" 
+    include: win_copy.yml
+    vars:
+      vm_ip: "{{ vm_ip }}"
+
+  - name: "Hardening VM {{ vm_ip }}" 
+    include: win_harden.yml
+    vars:
+      vm_ip: "{{ vm_ip }}"
+
+  - name: "Installing Apps on VM {{ vm_ip }}" 
+    include: win_App_inst_cleanup.yml
+    vars:
+      vm_ip: "{{ vm_ip }}"
+      #image_version: "Azure-Marketplace-SKU = 2019-Datacenter, ImageReference.Version = 2019.0.20190410"
+      image_version: "{{ image_version }}"
+      buildDate: "{{ buildDate }}"
+    tags: win_app_install
+    vars:
+      ansible_host: "{{ vm_ip }}"
+      ansible_winrm_transport: basic
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+      ansible_connection: winrm
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985
+      # Added below timeouts, due to jenkins build issue for win2019
+      # issue: ConnectionResetError: [Errno 104] Connection reset by peer
+      ansible_winrm_operation_timeout_sec: 60
+      ansible_winrm_read_timeout_sec: 90
+
+
+  - name: "Checking Tanium Status on {{ vm_ip }}, this will take a while ~2+ Hours" 
+    include: tanium_newBuild_status.yml
+    vars:
+      vm_ip: "{{ vm_ip }}"
+    tags: tanium_win_updates
+
+  - name: "Finalizing VM with ip {{ vm_ip }}" 
+    include: finalize_az_build.yml
+    vars:
+      vm_ip: "{{ vm_ip }}"

@@ -1,0 +1,25 @@
+---
+
+  sub_id: your_subscription_id
+  resource_group: ss60-shared-imagegallery-rg
+  #network_rg: ss60-shared-imagegallery-rg
+  network_rg: dc60-network-rg
+  virtual_network: dc60-app-vnet
+  subnet_name: ss60-deliverytools-sbn
+  #security_group: dc60-app-nsg		#No longer required to create nic interface, updated Aug-26-2021 
+  az_tags: "dc=dc60, environment=hcm-Toronto, repo=delivery-tools, server_type=market-image-builds, tier=app, workstream=application-sharedservices, build=ansible"
+  disk_size: 200
+  #Aug-26-2021 Adding below lock for DC60 which has lock on the network-resource group
+  network_resource_group_lock: dc60-network-rg-rglock
+  #Sep-22-2021 Adding below lock for DC60 which has lock on the shared-imagegallery-rg group
+  sharedimage_resource_group_lock: ss60-shared-imagegallery-rglock
+
+  #below vars for Image push to shared image gallery
+  image_gallery_name: your_image_shared_gallery
+  image_gallery_image_definition: Windows2016-DC-Image-Defination
+  image_source_rg: ss60-shared-imagegallery-rg
+  image_location: your_subscription_location
+  # Nov29-2021 Adding brazilsoutheast, brazilsouth, eastus2, westus2
+  # Apr13-2022 update, Adding australiaeast=2, australiasoutheast=2
+  image_target_regions: canadaeast=2 canadacentral=3 brazilsoutheast=2 brazilsouth=3 eastus2=2 westus2=3 australiaeast=2 australiasoutheast=2 
+

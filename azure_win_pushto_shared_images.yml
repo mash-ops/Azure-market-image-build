@@ -1,0 +1,104 @@
+---
+#Sep-08-2021: Jinjafied the task, below is new way of calling
+#
+## ansible-playbook -e "@win_dc95.yml" -e "image_version_option=-patch created_by=manjesh_m_and_dgarvey image_month=sep expiry_date='12/31/2025' captured_image_name=sdo-win2019dc-aug102021-market-build-image" azure_win_pushto_shared_images.yml -vvvv
+#
+#Note: image_version_option will accept 3 options based on Azure versioning of the image
+#      options are, -major, -minor, -patch
+#      Example: if version is 1.2.3 and -major is used, the new version will be 2.0.0
+#                                       -minor is used, the new version will be 1.3.0
+#                                       -patch is used, the new version will be 1.2.4
+# 
+#Sep-21-2021: Integrated Dynamic image-defination-name based on sku and captured_image_name
+#             when integration with pipeline need to comment out sku, since its already avaialbe during image build phase
+#
+#New way of calling: # ansible-playbook -e "vname=sdow160920a115 captured_image_name=sapsf-img-win2016-dc-mssql-sep15-azure-latest" -e "@win_dc95.yml" -e "image_version_option=-patch created_by=manjesh_m_and_dgarvey image_month=sep expiry_date='12/31/2025'" azure_win_pushto_shared_images.yml -vvvv
+#
+#--target-regions eastus=3=standard_lrs eastus2=2=standard_lrs westus=3=standard_lrs westus2=2=standard_lrs canadacentral=2=standard_lrs canadaeast=3=standard_lrs \
+
+- hosts: localhost
+  connection: local
+  vars:
+    ver: " "
+    version_option: " "
+    sku: "{{ '2012-R2-Datacenter' if vname.find('w12') != -1 else '2016-Datacenter' if vname.find('w16') != -1 else '2019-Datacenter' if vname.find('w19') != -1 }}"
+    sku_version: '{{ sku.split("-")[0] }}'
+    is_mssql: '{{ captured_image_name.split("-")[4] }}'
+
+  tasks:
+# below method of calling, before integration into azure_win_pushto_shared_images.yml
+# ansible-playbook -e "vname=sdow160920a115 captured_image_name=sapsf-img-win2016-dc-mssql-sep15-azure-latest" -e "@win_dc60.yml" set_definition.yml -vvvv
+#
+  - debug:
+      var: '"{{ sku_version }}"  "{{ is_mssql }}"'
+
+  - name: Set the image definition name
+    shell: |
+     #echo "{{ sku }}"
+     #echo "{{ sku_version }}"
+     /usr/bin/az sig image-definition list -r "{{ image_gallery_name }}" -g "{{ image_source_rg }}" --query "[?contains(name, 'Windows')].name" -o tsv | egrep -v "mssql" |egrep "{{ sku_version }}"
+
+    when: ( "mssql" not in captured_image_name )
+    register: image_definition_to_use 
+
+  - set_fact:
+     image_definition_name: "{{ image_definition_to_use.stdout }}"
+    when:  image_definition_to_use is changed
+
+  - debug:
+     var: image_definition_to_use
+
+  - name: Set the image definition name when mssql
+    shell: |
+     /usr/bin/az sig image-definition list -r "{{ image_gallery_name }}" -g "{{ image_source_rg }}" --query "[?contains(name, 'Windows')].name" -o tsv | egrep "{{ is_mssql }}" |egrep "{{ sku_version }}"
+    when: ( "mssql" in captured_image_name and image_definition_name is undefined )
+    register: image_definition_to_use 
+
+  - set_fact:
+     image_definition_name: "{{ image_definition_to_use.stdout }}"
+    when:  image_definition_name is undefined
+
+  - debug:
+     msg: "{{ image_definition_name }}"
+
+  - name: Get current image definition version
+    shell: |
+        #Sep-21-2021 commented below,sort by publishDate, ran into issues if outof sequence push of version number and current date is pushed
+        #ver=`az sig image-version list --gallery-image-definition "{{ image_definition_name }}" --gallery-name "{{ image_gallery_name }}" --resource-group "{{ image_source_rg }}" --query "sort_by([], &publishingProfile.publishedDate)[-1:]" -o table|tail -1|awk '{print $1}'`
+
+        #Sep-21-2021 fix, sort by version number/name
+        ver=`/usr/bin/az sig image-version list --gallery-image-definition "{{ image_definition_name }}" --gallery-name "{{ image_gallery_name }}" --resource-group "{{ image_source_rg }}" --query '[].[name]' -o tsv|sort --version-sort |tail -1|awk '{print $1}'`
+
+        version_option="{{ image_version_option }}"
+        printf "Current Version is : $ver\n"
+        new_image_version="`/bin/bash imageversion.bash $version_option $ver`"
+        printf "New image version is : $new_image_version"
+        printf "\n$new_image_version"
+    register: current_version
+
+  - name: "Debug New_version"
+    debug:
+      #var: current_version
+      msg: "{{ current_version.stdout_lines[2] }}"
+
+  - name: Create a new Shared Image Version
+    shell: |
+        /usr/bin/az sig image-version create \
+                    --gallery-name "{{ image_gallery_name }}" \
+                    --gallery-image-definition "{{ image_definition_name }}" \
+                    --resource-group "{{ resource_group }}" \
+                    --gallery-image-version "{{ current_version.stdout_lines[2] }}" \
+                    --location "{{ image_location }}" \
+                    --target-regions {{ image_target_regions }} \
+                    --end-of-life-date "2025-12-31T00:00:00+00:00" \
+                    --exclude-from-latest false \
+                    --managed-image "/subscriptions/{{ sub_id }}/resourceGroups/{{ image_source_rg }}/providers/Microsoft.Compute/images/{{ captured_image_name }}" \
+                    --tags "created_by={{ created_by }}" "use_case={{ image_definition_name }}-{{ image_month }}-2022" "expiry_date={{ expiry_date }}" 
+    register: shared_image_push
+
+
+
+#  - name: "Debug image_push"
+#    debug:
+#      var: shared_image_push
+

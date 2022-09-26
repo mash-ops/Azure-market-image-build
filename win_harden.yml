@@ -1,0 +1,285 @@
+---
+
+  # Disable windows update
+  - name: WIN_REGEDIT 
+    win_regedit:
+       key: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+       name: DisableWindowsUpdateAccess
+       data: "0"
+       type: dword
+  
+  # Remove windows-defender
+  - name: Uninstall defender
+    win_shell: |
+        Uninstall-WindowsFeature -Name Windows-Defender
+    ignore_errors: true
+
+  # Feb-21-2022: below kb4494175 is being installed as a workaround until Microsoft updates the mcupdate_genuineintel.dll in latest Market Image.
+  ##             Issue raised by vivekananda.dv@sap.com via eMail for win2016 azure image
+  ##             Subject: [ACTION REQUIRED] Meltdown spectre Patch
+  # Feb-22-2022: Added file version check and if its version 10.0.14393.0 then update to kb4494175 version of mcupdate_GenuineIntel.dll
+  ##             If MS decides to update the version > than 10.0.14393.0 in the market image, then we don't install this kb4494175
+  ##             MS support case 2202140010002473, to update the file to newer version
+
+  - name: check current version of mcupdate_GenuineIntel.dll file
+    win_shell: |
+            (get-item c:\windows\system32\mcupdate_GenuineIntel.dll).versioninfo.fileversion | foreach-object {
+            $data = $_ -split " "
+            "{0}" -f $data[0] }
+    register: mcupdate_version_info
+
+  - debug:
+      msg: "{{ mcupdate_version_info.stdout_lines[0] }}"
+
+  - name: Install hotfix kb4494175
+    win_hotfix:
+      hotfix_kb: kb4494175
+      source: c:\windows\temp\kb4494175.msu
+      state: present
+    when: ( "2016" in ansible_distribution and mcupdate_version_info.stdout_lines[0] == "10.0.14393.0" )
+    register: hotfix_install
+
+  # Feb-22-2202: Commenting this out, and reducing one reboot, since we already reboot in below tasks 
+  #- win_reboot:
+  #  when: hotfix_install.reboot_required
+
+  # Reference for below task : 
+  # https://docs.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/network-security-lan-manager-authentication-level
+  - name: Send NTLMv2 response only. Refuse LM & NTLM
+    win_regedit:
+       key: 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'
+       name: LMCompatibilityLevel
+       data: "5"
+       type: dword
+
+  - name: restart update service
+    win_service:
+      name: wuauserv
+      state: restarted
+
+  # Note to self: When new azure VM is created, we cannot use the default windows Accounts, hence we are using opsadmin when the VM is created
+  # when LGPO is applied the Administrator(opsadmin) account is renamed to sfAdministrator as part of the hardening
+  # Below task is to create a temporary admin account to continue with the remaining tasks after LGPO is applied 
+  # And the tempAdmin account is deleted once sfAdministrator account is renamed back to Administrator!
+  - name: Creating tempAdmin account with Administrator previlages
+    win_user:
+      name: tempAdmin
+      password: "{{ secret.tempAdmin }}"
+      state: present
+      groups:
+        - Administrators
+    register: new_tempAdmin
+
+  - name: now we have tempAdmin lets use it.
+    set_fact:
+      ansible_user: tempAdmin
+      ansible_password: "{{ secret.tempAdmin }}"
+
+  # rebooting after tempAdmin creation, to fix homedir for Administrator which will still have opsadmin in below tasks
+  - name: Rebooting after tempAdmin creation, so sfAdministrator account is not in use when we rename down the line
+    win_reboot:
+      post_reboot_delay: 120
+
+  # Applying LGPO
+  - name:  win_harden\LGPO-Bkp
+    win_shell: |
+        C:\Windows\Temp\win_harding\LGPO.exe /g C:\Windows\Temp\win_harding\LGPO-Bkp
+    ignore_errors: true
+
+  # Applying LGPO related registry
+  - name: AutoAdminLogon-WinSec&1.30.02.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\AutoAdminLogon-WinSec&1.30.02.reg'
+
+  - name: eventlog-Security-WarningLevel90_WinSec_2.90.02.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\eventlog-Security-WarningLevel90_WinSec_2.90.02.reg'
+
+  - name: schannel.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\schannel.reg'
+
+  - name: smbsigning.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\smbsigning.reg'
+  - name: SNMP-hardening-WinSec&2.90.02.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\SNMP-hardening-WinSec&2.90.02.reg'
+
+  - name: Tcpip-Parameters_WinSec2.70.01.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\Tcpip-Parameters_WinSec2.70.01.reg'
+
+  - name: UseLogonCredential-WinSec&1.30.08.reg
+    win_shell: |
+        reg import 'C:\Windows\Temp\win_harding\UseLogonCredential-WinSec&1.30.08.reg'
+
+
+  # Rename sfAdminstrator after LGPO changes it from Administrator
+  - name: Renameing local account sfAdministrator back to Administrator
+    win_shell: |
+      $rename_opsadmin={ C:\Windows\System32\wbem\WMIC.exe useraccount where "name like 'sfAdministrator'" rename name='Administrator'}
+      Invoke-Command -ScriptBlock $rename_opsadmin
+      Start-Sleep -s 30
+    register: shell_output
+
+  # Make sure Administrator account is there
+  - name: Ensure user Administrator is present
+    win_user:
+      name: Administrator
+      password: "{{ secret.Administrator }}"
+      home_directory: C:\Users\Administrator
+      password_never_expires: yes
+      account_disabled: no
+      account_locked: no
+      state: present
+      groups:
+         - Administrators
+
+  - name: Change user Administrator password to our standards for the market image
+    win_user:
+      name: Administrator
+      password: "{{ secret.Administrator }}"
+    register: admin_pass_change
+
+  - name: Changing ProfileImagePath for user Administrator after rename from sfAdministrator
+    win_shell: |
+      reg add 'HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList\{{ admin_pass_change.sid }}' /v ProfileImagePath /d C:\Users\Administrator /f
+      rename-item -path C:\Users\opsadmin -newname Administrator
+
+  # rebooting after windows-defender uninstall and LGPO is applied
+  - name: Rebooting after LGPO install and sfAdministrator rename craziness
+    win_reboot:
+      post_reboot_delay: 120
+
+  # switch to Administrator account
+  - name: now we have Administrator lets use it.
+    set_fact:
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+
+  - name: Print rename output
+    debug:
+      var: shell_output
+
+  - name: Ensure user tempAdmin is absent
+    win_user:
+      name: tempAdmin
+      state: absent
+    register: del_tempAdmin
+
+
+  # rebooting after tempAdmin account deletion
+  - name: Rebooting after tempAdmin account deletion, for sane environment
+    win_reboot:
+      post_reboot_delay: 120
+
+  - name: deleting the users directory for "{{ del_user }}"
+    win_file:
+      path: "{{ del_user }}"
+      state: absent
+    ignore_errors: true
+    with_items:
+      - 'C:\users\tempAdmin'
+      - 'C:\users\opsadmin'
+      - 'C:\Windows\Panther'
+    loop_control:
+      loop_var: del_user
+    when: del_tempAdmin.changed
+
+
+  - name: Cleanup SID "{{ new_tempAdmin.sid }} for tempAdmin after account deletion
+    win_user_profile:
+      username: "{{ new_tempAdmin.sid }}"
+      state: absent
+    when: del_tempAdmin.changed
+    register: sid_delete
+
+  - name: Print sid cleanup output
+    debug:
+      var: sid_delete
+
+
+  # Security remediation
+  - name: disable smb1protocol
+    win_shell: |
+        Disable-WindowsOptionalFeature -Online -FeatureName smb1protocol
+    ignore_errors: true
+
+  - name: disable samba
+    win_shell: |
+        Set-SmbServerConfiguration -EnableSMB1Protocol $false -Force
+    ignore_errors: true
+
+  - name: disble ssl 2.0
+    win_shell: |
+        powershell.exe -ExecutionPolicy ByPass -File C:\Windows\Temp\win_harding\disable_ssl2_0.ps1
+
+  - name: disble ssl 3.0
+    win_shell: |
+        powershell.exe -ExecutionPolicy ByPass -File C:\Windows\Temp\win_harding\disable_ssl3_0.ps1
+
+  - name: disable firewall
+    win_shell: |
+        netsh advfirewall set allprofiles state off
+
+  - name: Spectre Meltdown protection 1
+    win_shell: |
+        reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v FeatureSettingsOverride /t REG_DWORD /d 0 /f
+
+  - name: Spectre Meltdown protection 2
+    win_shell: |
+        reg add "HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management" /v FeatureSettingsOverrideMask /t REG_DWORD /d 3 /f
+
+
+  # Enable RDP
+  - name: Enable RDP
+    win_shell: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+
+
+  - name: Disabeling services on windows server 2012, 2012 R2, 2016, 2019 as per itsec wiki
+    include: win_services_harden.yml
+
+
+  # Install SAP approved certificates
+  - name: Installing SAP approved certs BaltimoreCyberTrustRoot, DigiCertGlobalRootCA, DigiCertHighAssuranceEVRootCA, DigiCertAssuredIDRootCA,  DigiCertGlobalRootG2
+    win_certificate_store:
+       path: "{{ item.source }}"
+       file_type: pem
+       state: present
+       store_location: LocalMachine
+       store_name: root
+    with_items:
+       - { source: "{{ dirPath }}BaltimoreCyberTrustRoot.crt" }
+       - { source: "{{ dirPath }}DigiCertAssuredIDRootCA.crt" }
+       - { source: "{{ dirPath }}DigiCertGlobalRootCA.crt" }
+       - { source: "{{ dirPath }}DigiCertGlobalRootG2.crt" }
+       - { source: "{{ dirPath }}DigiCertHighAssuranceEVRootCA.crt" }
+    vars:
+     dirPath: c:\windows\temp\
+
+  # print current local user accounts
+  - name: print users
+    win_shell: |
+       wmic useraccount get name
+    register: usersout
+
+  - set_fact:
+      user_lines: "{{ usersout.stdout_lines | select('string') | list }}"
+
+  - debug:
+      msg: "This is a stdout line: {{ user_lines }}"
+
+  # Feb-22-2202: Removing MpSigStub.exe as requested by vivekananda.dv@sap.com via eMail
+  #              RE: [ACTION REQUIRED] Microsoft Defender Vulnerability remediation
+  #
+  - name: Remove a file, if present (MpSigStub.exe)
+    win_file:
+      path: C:\windows\System32\MpSigStub.exe
+      state: absent
+    register: file_deletion
+
+  - debug:
+      msg: "{{ file_deletion }}"
+

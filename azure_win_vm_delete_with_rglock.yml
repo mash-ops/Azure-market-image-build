@@ -1,0 +1,112 @@
+---
+
+  - name: List locks of "{{ vm_name }}"
+    azure_rm_lock_info:
+      managed_resource_id: "/subscriptions/{{ sub_id }}/resourcegroups/{{ resource_group }}/providers/Microsoft.Compute/virtualMachines/{{ vm_name }}"
+    register: vm_locks
+    ignore_errors: true
+
+  - name: List locks for nic1-"{{ vm_name }}"
+    azure_rm_lock_info:
+      managed_resource_id: "/subscriptions/{{ sub_id }}/resourceGroups/{{ network_rg }}/providers/Microsoft.Network/networkInterfaces/nic1-{{ vm_name }}"
+    register: nic_locks
+    ignore_errors: true
+
+  - debug:
+      var: vm_locks 
+
+  - debug:
+      var: nic_locks
+
+  - name: print vm_locks
+    debug: 
+      msg: "{{ item.id }}"
+    with_items:
+      - "{{ vm_locks.locks}}"
+    when: vm_locks.locks is defined
+
+
+  - name: print nic_locks
+    debug:
+      msg: "{{ item.id }}"
+    with_items:
+      - "{{ nic_locks.locks}}"
+    when: nic_locks.locks is defined
+
+
+  - name: Removing lock for resource group "{{ item.id }}"
+    azure_rm_lock:
+      managed_resource_id: "{{ item.managed_resource_id }}"
+      name: "{{ item.name }}"
+      state: absent
+    with_items:
+      - "{{ vm_locks.locks}}"
+    register: rg_lock_deleted
+    when: vm_locks.locks is defined
+
+  - debug:
+      msg: "{{ rg_lock_deleted }}"
+
+
+  - name: Removing lock for nic resource group "{{ item.id }}"
+    azure_rm_lock:
+      managed_resource_id: "{{ item.managed_resource_id }}"
+      name: "{{ item.name }}"
+      state: absent
+    with_items:
+      - "{{ nic_locks.locks}}"
+    register: nic_lock_deleted
+    when: nic_locks.locks is defined
+
+  - debug:
+      msg: "{{ nic_lock_deleted }}"
+
+  #Since Jul30 2022 build, seeing resource locked error messages, adding a pause to address this issue
+  - name: "Pausing 2 minutes for deleted locks to be refreshed in the backend"
+    pause:
+      minutes: 2
+    when: rg_lock_deleted.changed
+
+  - name: Removing VM {{ vm_name }} and all resources that were autocreated
+    azure_rm_virtualmachine:
+      resource_group: "{{ resource_group }}"
+      name: "{{ vm_name }}"
+      remove_on_absent: all
+      state: absent
+    register: nuke_vm
+
+
+  - name: Delete network interface
+    azure_rm_networkinterface:
+      resource_group: "{{ network_rg }}"
+      name: "nic1-{{ vm_name }}"
+      state: absent
+    when: nuke_vm.changed == false 
+
+
+  - name: Recreating lock for vm resource group "{{ resource_group }}"
+    azure_rm_lock:
+      managed_resource_id: "{{ item.managed_resource_id }}"
+      name: "{{ item.name }}"
+      state: present
+      level: can_not_delete
+    with_items:
+      - "{{ vm_locks.locks}}"
+    register: rg_lock_create
+    when: vm_locks.locks is defined
+
+  - debug:
+      msg: "{{ rg_lock_create }}"
+
+
+  - name: Recreating lock for nic resource group "{{ item.id }}"
+    azure_rm_lock:
+      managed_resource_id: "{{ item.managed_resource_id }}"
+      name: "{{ item.name }}"
+      state: present
+      level: can_not_delete
+    with_items:
+      - "{{ nic_locks.locks}}"
+    register: nic_rg_lock_create
+    when: nic_locks.locks is defined
+

@@ -1,0 +1,83 @@
+---
+
+  - name: deleting the users directory for "{{ del_user }}"
+    win_file:
+      path: "{{ del_user }}"
+      state: absent
+    ignore_errors: true
+    with_items:
+      - 'C:\users\tempAdmin'
+      - 'C:\users\opsadmin'
+      - 'C:\Windows\Panther'
+    loop_control:
+      loop_var: del_user
+    vars:
+      ansible_winrm_transport: basic
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+      ansible_connection: winrm
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985
+
+  - name: print users
+    win_shell: |
+       wmic useraccount 
+    register: usersout
+    vars:
+      ansible_winrm_transport: basic
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+      ansible_connection: winrm
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985
+
+  - name: Print query output
+    debug: 
+      var: usersout
+
+  # Clear event logs
+  # Added below separate 2019 eventlog cleanup due to issue:
+  # Clear-EventLog : The operating system reported an error when writing the event entry to the event log
+  #
+  - name: Clear event logs for windows 2019
+    win_command: cmd /C for /F "tokens=*" %1 in ('wevtutil.exe el') DO wevtutil.exe cl "%1"
+    ignore_errors: True
+    when: ( "2019" in ansible_distribution )
+    vars:
+      ansible_winrm_transport: basic
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+      ansible_connection: winrm
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985
+
+  - name: Clear event logs for windows 2012 or windowds 2016
+    win_shell: |
+        Clear-EventLog -LogName (Get-EventLog -List).log
+    ignore_errors: True
+    when:  ( "2012" in ansible_distribution or
+             "2016" in ansible_distribution )
+    vars:
+      ansible_winrm_transport: basic
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+      ansible_connection: winrm
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985
+
+  - name: "Sysprep VM"
+    win_command: C:\Windows\System32\Sysprep\Sysprep.exe /generalize /oobe /quiet /mode:vm /quit
+    ignore_errors: True
+    vars:
+      ansible_winrm_transport: basic
+      ansible_user: Administrator
+      ansible_password: "{{ secret.Administrator }}"
+      ansible_connection: winrm
+      ansible_winrm_server_cert_validation: ignore
+      ansible_winrm_port: 5985
+
+
+  - name: "Sysprep Waiting 5minutes, get a cup of coffee ;) "
+    pause:
+      minutes: 5
+

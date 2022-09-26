@@ -1,0 +1,89 @@
+---
+  # Disable windows update
+  - name: WIN_REGEDIT
+    win_regedit:
+       key: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+       name: DisableWindowsUpdateAccess
+       data: "0"
+       type: dword
+
+  - name: stop Tanium Client, since using direct update from MS
+    win_service:
+      name: Tanium Client
+      state: stopped
+
+#  - name: Print Tanium tool dir count info
+#    debug:
+#      msg: "{{ tanium_tools_count }}"
+#    ignore_errors: yes
+
+  - name: restart update service
+    win_service:
+      name: wuauserv
+      state: restarted
+
+    #Bypassing Tanium update and getting updates directly from Microsoft, due to oct2021 win2016 tanium issue
+    #
+#  - name: Install all updates and reboot as many times as needed
+#    win_updates:
+#      category_names: '*'
+#      reboot: yes
+#    register: patch_complete_status
+
+
+  - name: First pass, Install all security, critical, and rollup updates without a scheduled task
+    win_updates:
+      category_names:
+        - SecurityUpdates
+        - CriticalUpdates
+        - UpdateRollups
+      state: installed
+      reboot: yes
+    register: patch_complete_status
+    ignore_errors: yes
+
+  - name: Print Windows update/ patch status
+    debug:
+      msg: "{{ patch_complete_status }}"
+    ignore_errors: yes
+
+  # Enable windows update, since after first pass and reboot the LGPO will disable windows updates and first pass will fail
+  - name: WIN_REGEDIT
+    win_regedit:
+       key: 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+       name: DisableWindowsUpdateAccess
+       data: "0"
+       type: dword
+
+  - name: Second pass, Install all security, critical, and rollup updates without a scheduled task
+    win_updates:
+      category_names:
+        - SecurityUpdates
+        - CriticalUpdates
+        - UpdateRollups
+      state: installed
+      reboot: yes
+    register: second_patch_complete_status
+    ignore_errors: yes
+
+  - name: Print Windows update/ patch second pass status
+    debug:
+      msg: "{{ second_patch_complete_status }}"
+
+    # Nov-22-2021: commented in win_harden.yml and adding defender uninstall after tanium patch install, to address win2016 tanium patch issue
+    # Remove windows-defender
+  - name: Uninstall defender
+    win_shell: |
+        Uninstall-WindowsFeature -Name Windows-Defender
+    ignore_errors: yes
+
+
+    # After tanium patch, some patch may need a reboot, rebooing here
+  - name: Rebooting after Tanium windows update/patching
+    win_reboot:
+      post_reboot_delay: 120
+    when: patch_complete_status
+
+  - name: Print current patches after Tanium patching
+    win_shell: get-hotfix|Sort-Object -Property InstalledOn
+    when: patch_complete_status

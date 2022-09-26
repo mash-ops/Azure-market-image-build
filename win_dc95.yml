@@ -1,0 +1,21 @@
+---
+ 
+  sub_id: your_subscription_id
+  resource_group: ss95-imagegallery-rg
+  #network_rg: ss95-imagegallery-rg
+  #resource_group: SS95-DELIVERYTOOLS-RG
+  network_rg: dc95-network-rg
+  virtual_network: dc95-app-vnet 
+  subnet_name: ss95-deliverytools-sbn
+  #security_group: dc95-app-nsg		#No longer required to create nic interface, updated Aug-26-2021
+  az_tags: "dc=dc95, environment=sandbox, repo=delivery-tools, server_type=market-image-builds, tier=app, workstream=application-sharedservices, build=ansible"
+  disk_size: 200
+  # define below if lock needs to be removed while VM deletion, added this in DC60 environment
+  #network_resource_group_lock: name_of_the_lock
+
+  #below vars for Image push to shared image gallery 
+  image_gallery_name: your_shared_image_gallery
+  image_gallery_image_definition: TestImage-windows
+  image_source_rg: ss95-imagegallery-rg
+  image_location: your_subscription_location
+  image_target_regions: eastus=3=standard_lrs eastus2=2=standard_lrs westus=3=standard_lrs westus2=2=standard_lrs canadacentral=2=standard_lrs canadaeast=3=standard_lrs

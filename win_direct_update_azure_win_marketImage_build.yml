@@ -1,0 +1,80 @@
+---
+#- hosts: all
+- hosts: localhost
+  connection: local
+  vars:
+    ansible_winrm_operation_timeout_sec: 60
+    ansible_winrm_read_timeout_sec: 70
+#  gather_facts: yes
+  vars_files:
+    - secrets.yml
+  tasks:
+
+  - name: create vms for builds using marketplace image
+    include_tasks: azure_mkt_vm_create.yml
+    with_items:
+      - "{{ build_vms }}"
+    
+  # Calling stage2 after VM creation, using marketplace image
+  - name: "Starting stage2 automation on {{ vm_ip }}"
+    import_tasks: win_direct_update_stage2.yml
+    vars:
+      vm_ip: "{{ vm_ip }}"
+
+  # Calling stage3 (Generalize the VM and capture image) after image hardening, Appinstall, Tanium patching and sysprep (finalizing the VM)
+  - name: Stage3 - Delegating to localhost
+    set_fact:
+      ansible_connection: local
+      ansible_host: 10.4.198.46
+      ansible_user: root
+      #ansible_python_interpreter: /root/.pyenv/shims/python
+
+  - name: "Stage3 - Generalizing and capturing the VM with ip {{ vm_ip }}"
+    delegate_to: localhost
+    include: azure_generalize_capture.yml
+    vars:
+      vm_name: "{{ build_vms[0] }}"
+      vm_ip: "{{ vm_ip }}"
+      resource_group: "{{ resource_group }}" 
+      template_name: "{{ template_name }}"
+    tags: generalize_task
+
+  - name: "Stage3 - Deleting build vm {{ vm_name }} after {{ template_name }} image capture"
+    delegate_to: localhost
+    include: azure_win_vm_delete.yml
+    vars:
+      vm_name: "{{ build_vms[0] }}"
+      resource_group: "{{ resource_group }}"
+    tags: generalize_task
+
+  # wait 3 minutes for build VM to be deleted, before staring stage4
+  - name: "Waiting 3minutes, for build vm to be deleted after capture"
+    pause:
+      minutes: 3
+    tags: generalize_task
+
+  # Calling stage4 - Create a test-vm from the captured image and test roles and feature install without issue
+  - name: Stage4 - Creating test vm from "{{ template_name }}" image
+    delegate_to: localhost
+    include: azure_post_image_vm_build.yml
+    vars:
+      vm_name: "{{ build_vms[0] }}"
+    tags: image_testing
+
+  - name: Stage4 - Delegating to localhost
+    set_fact:
+      ansible_connection: local
+      ansible_host: 10.4.198.46
+      ansible_user: root
+    tags: image_testing
+ 
+  - name: "Stage4 - Deleting test vm from {{ vm_name }} after testing image {{ template_name }}" 
+    delegate_to: localhost
+    include: azure_win_vm_delete.yml
+    vars:
+      vm_name: "{{ build_vms[0] }}"
+      resource_group: "{{ resource_group }}" 
+    tags: image_testing
+
+
+

@@ -1,6 +1,6 @@
 pipeline {
     agent { label 'master' }
-    options { ansiColor('xterm')
+    options { ansiColor('xterm-256color')
               //ansiColor('vga') { echo '\033[42m\033[97mWhite letters, green background\033[0m'}
     }
     parameters {

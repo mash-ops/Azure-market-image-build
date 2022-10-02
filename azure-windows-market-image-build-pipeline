@@ -1,0 +1,91 @@
+pipeline {
+    agent { label 'master' }
+    options { ansiColor('xterm')
+              //ansiColor('vga') { echo '\033[42m\033[97mWhite letters, green background\033[0m'}
+    }
+    parameters {
+        #choice(choices: ['cc'], description: 'Choose platform to trigger Image deploy', name: 'platform')
+        string(name: 'build_vm_name', description: 'Enter build VM Name, eg. sdow121020a115')
+        string(name: 'disk_size', description: 'Enter the Disk size, For MSSQL use 200', defaultValue: '128')
+        string(name: 'image_name', description: 'Image Name, for MSSQL the position is importatn for image push', defaultValue: 'sdo-win2012r2-dc-Jan15-azure-latest')
+        #extendedChoice description: 'Choose version to deploy', descriptionPropertyValue: '', multiSelectDelimiter: ',', name: 'versions_to_build', quoteValue: false, saveJSONParameterToFile: false, type: 'PT_MULTI_SELECT', value: 'win2012r2-dc, win2016-dc, win2019-dc', defaultValue: 'win2012r2-dc', visibleItemCount: 3
+    }
+    stages {
+        stage('Paramters') {
+            steps {
+                sh "echo ${params.build_vm_name}"
+                sh "echo ${params.disk_size}"
+                sh "echo ${params.image_name}"
+                //script { build_date = sh ( date +"%M-%d-%Y").trim() }
+                //def build_date = sh ( script: 'date +%b-%d-%Y', returnStdout: true )
+                //println build_date
+                script { def build_date = sh(script: 'date +%b-%d-%Y', returnStdout: true)
+                println build_date
+                }
+            }
+        }
+         stage('Check out Ansible Playbook code'){
+            steps {
+				//dir("./ansible-playbooks") {
+					git branch: 'master',
+					credentialsId: 'mash-ops',
+					url: 'https://github.com/mash-ops/Azure-market-image-build.git'
+				//}
+			}
+        }
+
+        stage('Image Build') {
+            environment {  build_date = sh(script: 'date +%b-%d-%Y', returnStdout: true)  }
+            steps {
+                echo "Sourcing Ansible Environment"
+                sh '''
+                    source /root/ansible/bin/activate
+                    export ANSIBLE_FORCE_COLOR=true
+                    source /root/.azure/dc60/dc60-tenant
+                    # cp /build/scripts/manjesh/azure_build/marketBuild/.vault .
+                    cd /var/lib/jenkins/workspace/DC60-Azure-Windows-market-image-build
+                    cp /build/scripts/manjesh/azure_build/marketBuild/Azure-market-image-build/.vault .
+                    #ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc95.yml' -e '{'build_vms':[\"${params.build_vm_name}\"]}' -e 'disk_size=\"${params.disk_size}\" buildDate=Aug-02-2021 template_name=\"${params.image_name}\"' --skip-tags tanium_win_updates -vvvv 
+                    #ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc95.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --skip-tags tanium_win_updates --tags image_testing -vvvv
+                    #ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc60.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --skip-tags tanium_win_updates -vvvv
+                    ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc60.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
+                    '''
+                }
+            }
+        }
+
+    post { 
+        failure { 
+            emailext body: "<br> Job parameters : Build VM Name :: ${params.build_vm_name}, Disk size :: ${params.disk_size} GB, Image Name :: ${params.image_name} <br><br> ${currentBuild.currentResult}: Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} <br><br> More info at: ${env.BUILD_URL}",
+            recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+            to: 'manjesh.munegowda@sap.com, ', subject: "Jenkins Build ${currentBuild.currentResult}: Image:: ${params.image_name}, Job:: ${env.JOB_NAME}"
+        }
+        success {
+            emailext body: "<br> Job parameters : Build VM Name :: ${params.build_vm_name}, Disk size :: ${params.disk_size} GB, Image Name :: ${params.image_name} <br><br> ${currentBuild.currentResult}: Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} <br><br> More info at: ${env.BUILD_URL}",
+            recipientProviders: [[$class: 'DevelopersRecipientProvider'], [$class: 'RequesterRecipientProvider']],
+            to: 'manjesh.munegowda@sap.com,', subject: "Jenkins Build ${currentBuild.currentResult}: Image:: ${params.image_name}, Job:: ${env.JOB_NAME}"
+        
+          // slackSend(color: "good", message: "${currentBuild.currentResult}: Image: ${params.image_name}, Job ${env.JOB_NAME} build ${env.BUILD_NUMBER}Message from Jenkins Pipeline")    
+           
+          sh '''
+            slack_url="https://hooks.slack.com/services/channel_id"
+            slack_message="Jenkins Job: ${JOB_NAME} with build# ${BUILD_NUMBER}, Successfully built :windows_modern: :azure: Image:: ${image_name}"
+            curl -X POST -H "Content-type: application/json" --data "{'text': '${slack_message}'}" $slack_url
+            '''
+            
+         // Push successful build image to Shared Image Gallery
+           
+           sh '''
+            build_month=`date +%b`
+            echo $build_month
+            source /root/ansible/bin/activate
+            export ANSIBLE_FORCE_COLOR=true
+            source /root/.azure/dc60/dc60-tenant
+            # cp /build/scripts/manjesh/azure_build/marketBuild/.vault .
+            cd /var/lib/jenkins/workspace/DC60-Azure-Windows-market-image-build
+            ansible-playbook -e "vname=$build_vm_name captured_image_name=$image_name" -e "@win_dc60.yml" -e "image_version_option=-patch created_by=manjesh_m image_month=$build_month expiry_date='12/31/2025'" azure_win_pushto_shared_images.yml -vvvv
+            '''
+            
+            }
+    }
+}

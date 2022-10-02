@@ -4,11 +4,11 @@ pipeline {
               //ansiColor('vga') { echo '\033[42m\033[97mWhite letters, green background\033[0m'}
     }
     parameters {
-        #choice(choices: ['cc'], description: 'Choose platform to trigger Image deploy', name: 'platform')
+        //#choice(choices: ['cc'], description: 'Choose platform to trigger Image deploy', name: 'platform')
         string(name: 'build_vm_name', description: 'Enter build VM Name, eg. sdow121020a115')
         string(name: 'disk_size', description: 'Enter the Disk size, For MSSQL use 200', defaultValue: '128')
         string(name: 'image_name', description: 'Image Name, for MSSQL the position is importatn for image push', defaultValue: 'sdo-win2012r2-dc-Jan15-azure-latest')
-        #extendedChoice description: 'Choose version to deploy', descriptionPropertyValue: '', multiSelectDelimiter: ',', name: 'versions_to_build', quoteValue: false, saveJSONParameterToFile: false, type: 'PT_MULTI_SELECT', value: 'win2012r2-dc, win2016-dc, win2019-dc', defaultValue: 'win2012r2-dc', visibleItemCount: 3
+        //#extendedChoice description: 'Choose version to deploy', descriptionPropertyValue: '', multiSelectDelimiter: ',', name: 'versions_to_build', quoteValue: false, saveJSONParameterToFile: false, type: 'PT_MULTI_SELECT', value: 'win2012r2-dc, win2016-dc, win2019-dc', defaultValue: 'win2012r2-dc', visibleItemCount: 3
     }
     stages {
         stage('Paramters') {

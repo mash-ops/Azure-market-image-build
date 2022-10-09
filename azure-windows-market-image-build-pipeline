@@ -27,7 +27,7 @@ pipeline {
          stage('Check out Ansible Playbook code'){
             steps {
 				//dir("./ansible-playbooks") {
-					git branch: 'master',
+					git branch: 'newbuildServer',
 					credentialsId: 'mash-ops',
 					url: 'https://github.com/mash-ops/Azure-market-image-build.git'
 				//}
@@ -39,9 +39,10 @@ pipeline {
             steps {
                 echo "Sourcing Ansible Environment"
                 sh '''
-                    source /root/ansible/bin/activate
+                    #source /root/ansible/bin/activate
                     export ANSIBLE_FORCE_COLOR=true
-                    source /root/.azure/dc60/dc60-tenant
+                    source /var/jenkins_home/.azure/dc60/dc60-tenant
+                    #source /root/.azure/dc60/dc60-tenant
                     # cp /build/scripts/manjesh/azure_build/marketBuild/.vault .
                     cd /var/lib/jenkins/workspace/DC60-Azure-Windows-market-image-build
                     cp /build/scripts/manjesh/azure_build/marketBuild/Azure-market-image-build/.vault .

@@ -42,12 +42,7 @@ pipeline {
                     #source /root/ansible/bin/activate
                     export ANSIBLE_FORCE_COLOR=true
                     . /var/jenkins_home/.azure/dc95/dc95-tenant
-                    #source /var/jenkins_home/.azure/dc95/dc95-tenant
-                    #source /root/.azure/dc60/dc60-tenant
-                    # cp /build/scripts/manjesh/azure_build/marketBuild/.vault .
-                    #cd /var/lib/jenkins/workspace/DC60-Azure-Windows-market-image-build
                     cd /var/jenkins_home/workspace/NewbuildServer_azure-windows-market-image-build
-                    cp /build/scripts/manjesh/azure_build/marketBuild/Azure-market-image-build/.vault .
                     ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc95.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
                     '''
                 }

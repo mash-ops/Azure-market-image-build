@@ -41,7 +41,8 @@ pipeline {
                 sh '''
                     #source /root/ansible/bin/activate
                     export ANSIBLE_FORCE_COLOR=true
-                    source /var/jenkins_home/.azure/dc95/dc95-tenant
+                    . /var/jenkins_home/.azure/dc95/dc95-tenant
+                    #source /var/jenkins_home/.azure/dc95/dc95-tenant
                     #source /root/.azure/dc60/dc60-tenant
                     # cp /build/scripts/manjesh/azure_build/marketBuild/.vault .
                     #cd /var/lib/jenkins/workspace/DC60-Azure-Windows-market-image-build

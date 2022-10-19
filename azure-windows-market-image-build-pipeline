@@ -3,6 +3,7 @@ pipeline {
     options { ansiColor('xterm-256color')
               //ansiColor('vga') { echo '\033[42m\033[97mWhite letters, green background\033[0m'}
     }
+  timestamps {
     parameters {
         //#choice(choices: ['cc'], description: 'Choose platform to trigger Image deploy', name: 'platform')
         choice choices: ['dc60', 'dc95'], description: 'Which DC to Build the Image', name: 'DataCenter'
@@ -87,4 +88,5 @@ pipeline {
 //            
 //            }
 //    }
+ } 
 }

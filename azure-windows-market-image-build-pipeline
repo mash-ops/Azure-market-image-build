@@ -5,6 +5,7 @@ pipeline {
     }
     parameters {
         //#choice(choices: ['cc'], description: 'Choose platform to trigger Image deploy', name: 'platform')
+        choice choices: ['dc60', 'dc95'], description: 'Which DC to Build the Image', name: 'DataCenter', value: 'win_dc60', 'win_dc95', defaultValue: 'win_dc60'
         string(name: 'build_vm_name', description: 'Enter build VM Name, eg. sdow121020a115')
         string(name: 'disk_size', description: 'Enter the Disk size, For MSSQL use 200', defaultValue: '128')
         string(name: 'image_name', description: 'Image Name, for MSSQL the position is importatn for image push', defaultValue: 'sdo-win2012r2-dc-Jan15-azure-latest')
@@ -43,7 +44,8 @@ pipeline {
                     export ANSIBLE_FORCE_COLOR=true
                     . /var/jenkins_home/.azure/dc95/dc95-tenant
                     cd /var/jenkins_home/workspace/NewbuildServer_azure-windows-market-image-build
-                    ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc95.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
+                    #ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc95.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
+                    ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@${DataCenter}.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
                     '''
                 }
             }

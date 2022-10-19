@@ -43,10 +43,11 @@ pipeline {
                 sh '''
                     #source /root/ansible/bin/activate
                     export ANSIBLE_FORCE_COLOR=true
-                    . /var/jenkins_home/.azure/dc95/dc95-tenant
+                    #. /var/jenkins_home/.azure/dc95/dc95-tenant
+                    . /var/jenkins_home/.azure/${DataCenter}/${DataCenter}-tenant
                     cd /var/jenkins_home/workspace/NewbuildServer_azure-windows-market-image-build
                     #ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_dc95.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
-                    ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e '@win_${DataCenter}.yml' -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
+                    ansible-playbook azure_win_marketImage_build.yml --vault-password-file .vault -e "@win_${DataCenter}.yml" -e "{'build_vms':[$build_vm_name]}" -e "disk_size=$disk_size buildDate=$build_date template_name=$image_name" --flush-cache -vvvv
                     '''
                 }
             }

@@ -3,7 +3,6 @@ pipeline {
     options { ansiColor('xterm-256color')
               //ansiColor('vga') { echo '\033[42m\033[97mWhite letters, green background\033[0m'}
     }
-  timestamps {
     parameters {
         //#choice(choices: ['cc'], description: 'Choose platform to trigger Image deploy', name: 'platform')
         choice choices: ['dc60', 'dc95'], description: 'Which DC to Build the Image', name: 'DataCenter'
@@ -12,6 +11,7 @@ pipeline {
         string(name: 'image_name', description: 'Image Name, for MSSQL the position is importatn for image push', defaultValue: 'sdo-win2012r2-dc-Jan15-azure-latest')
         //#extendedChoice description: 'Choose version to deploy', descriptionPropertyValue: '', multiSelectDelimiter: ',', name: 'versions_to_build', quoteValue: false, saveJSONParameterToFile: false, type: 'PT_MULTI_SELECT', value: 'win2012r2-dc, win2016-dc, win2019-dc', defaultValue: 'win2012r2-dc', visibleItemCount: 3
     }
+  timestamps {
     stages {
         stage('Paramters') {
             steps {
@@ -53,7 +53,7 @@ pipeline {
                 }
             }
         }
-
+       }
 //    post { 
 //        failure { 
 //            emailext body: "<br> Job parameters : Build VM Name :: ${params.build_vm_name}, Disk size :: ${params.disk_size} GB, Image Name :: ${params.image_name} <br><br> ${currentBuild.currentResult}: Job ${env.JOB_NAME} build ${env.BUILD_NUMBER} <br><br> More info at: ${env.BUILD_URL}",
@@ -88,5 +88,4 @@ pipeline {
 //            
 //            }
 //    }
- } 
 }
